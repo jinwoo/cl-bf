@@ -43,9 +43,12 @@
                                (bf-dp bf)))))
 
 (defun handle-comma (bf)
-  (let ((b (read-char *standard-input* nil 0)))
-    (setf (aref (bf-data bf) (bf-dp bf))
-          (char-code b))))
+  (let ((line (read-line *standard-input* nil :eof)))
+    (unless (eql line :eof)
+      (setf (aref (bf-data bf) (bf-dp bf))
+            (cond
+              ((zerop (length line)) (char-code #\Newline))
+              (t (char-code (aref line 0))))))))
 
 (defun handle-[ (bf)
   (let ((b (aref (bf-data bf) (bf-dp bf))))
