@@ -42,13 +42,35 @@
   (write-char (code-char (aref (bf-data bf)
                                (bf-dp bf)))))
 
+(defvar *char-buf* nil)
+
+(defun fill-char-buf ()
+  (setf *char-buf* (nreverse *char-buf*))
+  (multiple-value-bind (line newline-missing)
+      (read-line *standard-input* nil :eof)
+    (if (eql line :eof)
+        (push :eof *char-buf*)
+        (progn
+          (map-into line
+                    #'(lambda (c)
+                        (push c *char-buf*))
+                    line)
+          (unless newline-missing
+            (push #\Newline *char-buf*))))
+    (setf *char-buf* (nreverse *char-buf*))))
+    
+(defun read-char-buf ()
+  (let ((c (pop *char-buf*)))
+    (or c
+        (progn
+          (fill-char-buf)
+          (pop *char-buf*)))))
+
 (defun handle-comma (bf)
-  (let ((line (read-line *standard-input* nil :eof)))
-    (unless (eql line :eof)
+  (let ((b (read-char-buf)))
+    (unless (eql b :eof)
       (setf (aref (bf-data bf) (bf-dp bf))
-            (cond
-              ((zerop (length line)) (char-code #\Newline))
-              (t (char-code (aref line 0))))))))
+            (char-code b)))))
 
 (defun handle-[ (bf)
   (let ((b (aref (bf-data bf) (bf-dp bf))))
