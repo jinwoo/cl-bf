@@ -1,7 +1,8 @@
 (defpackage #:bf
   (:use #:cl)
   (:export #:run
-           #:run-file))
+           #:run-file
+           #:main))
 
 (in-package #:bf)
 
@@ -13,34 +14,68 @@
 
 (defstruct bf
   (instructions "" :type string)
-  (ip 0 :type fixnum)
+  (ip -1 :type fixnum)
   (data (make-array +data-size+
                     :element-type '(unsigned-byte 8)
                     :initial-element 0))
   (dp 0 :type fixnum))
 
-(defun read-instruction (bf)
-  (aref (bf-instructions bf) (bf-ip bf)))
+(defun next-instruction (bf)
+  (if (>= (bf-ip bf)
+          (1- (length (bf-instructions bf))))
+      nil
+      (progn
+        (incf (bf-ip bf))
+        (aref (bf-instructions bf)
+              (bf-ip bf)))))
 
-(defun handle-> (bf)
+(defun prev-instruction (bf)
+  (if (<= (bf-ip bf) 0)
+      nil
+      (progn
+        (decf (bf-ip bf))
+        (aref (bf-instructions bf)
+              (bf-ip bf)))))
+
+(defun read-data (bf)
+  (aref (bf-data bf)
+        (bf-dp bf)))
+
+(defun write-data (data bf)
+  (setf (aref (bf-data bf)
+              (bf-dp bf))
+        data))
+
+(defun incr-data (bf)
+  (let ((new-val (1+ (read-data bf))))
+    (write-data (mod new-val 256)
+                bf)))
+
+(defun decr-data (bf)
+  (let ((new-val (1- (read-data bf))))
+    (write-data (mod new-val 256)
+                bf)))
+
+(defun dp-> (bf)
   (incf (bf-dp bf)))
 
-(defun handle-< (bf)
+(defun <-dp (bf)
   (decf (bf-dp bf)))
 
+(defun handle-> (bf)
+  (dp-> bf))
+
+(defun handle-< (bf)
+  (<-dp bf))
+
 (defun handle-+ (bf)
-  (let ((new-value (1+ (aref (bf-data bf) (bf-dp bf)))))
-    (setf (aref (bf-data bf) (bf-dp bf))
-          (mod new-value 256))))
+  (incr-data bf))
 
 (defun handle-- (bf)
-  (let ((new-value (1- (aref (bf-data bf) (bf-dp bf)))))
-    (setf (aref (bf-data bf) (bf-dp bf))
-          (mod new-value 256))))
+  (decr-data bf))
 
 (defun handle-. (bf)
-  (write-char (code-char (aref (bf-data bf)
-                               (bf-dp bf)))))
+  (write-char (code-char (read-data bf))))
 
 (defvar *char-buf* nil)
 
@@ -69,55 +104,53 @@
 (defun handle-comma (bf)
   (let ((b (read-char-buf)))
     (unless (eql b :eof)
-      (setf (aref (bf-data bf) (bf-dp bf))
-            (char-code b)))))
+      (write-data (char-code b)
+                  bf))))
 
 (defun handle-[ (bf)
-  (let ((b (aref (bf-data bf) (bf-dp bf))))
+  (let ((b (read-data bf)))
     (if (zerop b)
-        (progn
-          (incf (bf-ip bf))
-          (move-ip-to-] bf)))))
+        (move-ip-to-] bf))))
 
 (defun move-ip-to-] (bf)
-  (let ((i (aref (bf-instructions bf) (bf-ip bf))))
-    (case i
-      (#\[ (handle-[ bf))
-      (#\] (return-from move-ip-to-])))
-    (incf (bf-ip bf))
-    (move-ip-to-] bf)))
+  (let ((i (next-instruction bf)))
+    (if i
+        (case i
+          (#\[ (move-ip-to-] bf)
+               (move-ip-to-] bf))
+          (#\] (return-from move-ip-to-]))
+          (otherwise (move-ip-to-] bf))))))
 
 (defun handle-] (bf)
-  (let ((b (aref (bf-data bf) (bf-dp bf))))
+  (let ((b (read-data bf)))
     (unless (zerop b)
-      (decf (bf-ip bf))
       (move-ip-to-[ bf))))
 
 (defun move-ip-to-[ (bf)
-  (let ((i (aref (bf-instructions bf) (bf-ip bf))))
-    (case i
-      (#\] (handle-] bf))
-      (#\[ (return-from move-ip-to-[)))
-    (decf (bf-ip bf))
-    (move-ip-to-[ bf)))
+  (let ((i (prev-instruction bf)))
+    (if i
+        (case i
+          (#\] (move-ip-to-[ bf)
+               (move-ip-to-[ bf))
+          (#\[ (return-from move-ip-to-[))
+          (otherwise (move-ip-to-[ bf))))))
 
 (defun run (instructions)
   (let ((bf (make-bf :instructions instructions)))
-    (labels ((run-helper (bf)
-               (if (< (bf-ip bf) (length (bf-instructions bf)))
-                   (let ((i (read-instruction bf)))
-                     (case i
-                       (#\> (handle-> bf))
-                       (#\< (handle-< bf))
-                       (#\+ (handle-+ bf))
-                       (#\- (handle-- bf))
-                       (#\. (handle-. bf))
-                       (#\, (handle-comma bf))
-                       (#\[ (handle-[ bf))
-                       (#\] (handle-] bf)))
-                     (incf (bf-ip bf))
-                     (run-helper bf)))))
-      (run-helper bf))))
+    (labels ((run-loop (bf)
+               (let ((i (next-instruction bf)))
+                 (when i
+                   (case i
+                     (#\> (handle-> bf))
+                     (#\< (handle-< bf))
+                     (#\+ (handle-+ bf))
+                     (#\- (handle-- bf))
+                     (#\. (handle-. bf))
+                     (#\, (handle-comma bf))
+                     (#\[ (handle-[ bf))
+                     (#\] (handle-] bf)))
+                   (run-loop bf)))))
+      (run-loop bf))))
 
 (defun run-file (path)
   (let ((program (with-open-file (in path :direction :input)
@@ -125,3 +158,8 @@
                      (read-sequence pgm in)
                      pgm))))
     (run program)))
+
+(defun main ()
+  (if (< (length sb-ext:*posix-argv*) 2)
+      (error "Program file must be provided."))
+  (run-file (second sb-ext:*posix-argv*)))
